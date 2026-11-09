@@ -60,6 +60,44 @@ if ChatFrameUtil and ChatFrameUtil.AddSenderNameFilter then
 end
 
 ---------------------------------------------------------------------------
+-- Prat 3.0 builds chat lines itself and never asks Blizzard's sender-name filter,
+-- so with Prat we add the tag through Prat's own "Prat_PreAddMessage" callback:
+-- message.PLAYERLINK is the sender, message.Pp is the end of the name (the "]").
+---------------------------------------------------------------------------
+local PratHook = {}
+
+function PratHook:Prat_PreAddMessage(_, message, _, event)
+	if type(message) ~= "table" or not TAG_EVENTS[event] then return end
+	local sender = message.PLAYERLINK
+	if GM.IsSecret(sender) or type(sender) ~= "string" or sender == "" then return end
+	local tag = GM.MainTagFor(sender)
+	if not tag then return end
+	local pp = message.Pp
+	if GM.IsSecret(pp) then return end
+	pp = type(pp) == "string" and pp or ""
+	if pp:find(tag, 1, true) then return end -- already tagged
+	message.Pp = pp .. " " .. tag
+end
+
+local function HookPrat()
+	if PratHook.hooked then return end
+	local Prat = _G.Prat
+	if type(Prat) ~= "table" or type(Prat.RegisterChatEvent) ~= "function" then return end
+	local ok = pcall(Prat.RegisterChatEvent, PratHook, "Prat_PreAddMessage")
+	if ok then
+		PratHook.hooked = true
+		GM.mainTagPrat = true
+	end
+end
+GM.HookPrat = HookPrat
+GM.PratHook = PratHook
+
+GM:On("ADDON_LOADED", function(_, name)
+	if type(name) == "string" and name:find("^Prat") then HookPrat() end
+end)
+GM:On("PLAYER_LOGIN", HookPrat)
+
+---------------------------------------------------------------------------
 -- !note
 ---------------------------------------------------------------------------
 local recent = {}

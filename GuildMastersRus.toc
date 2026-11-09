@@ -4,6 +4,7 @@
 ## Author: Keith Francis
 ## Version: 0.9.0-beta
 ## SavedVariables: GuildMastersRusDB
+## OptionalDeps: Prat-3.0
 ## IconTexture: Interface\AddOns\GuildMastersRus\Media\Icon\GuildMastersRus
 ## AddonCompartmentFunc: GuildMastersRus_OnCompartmentClick
 ## AddonCompartmentFuncOnEnter: GuildMastersRus_OnCompartmentEnter

@@ -94,14 +94,14 @@ def test_scanning():
     check(g is not None and g.initialized, "first scan initializes the guild")
     check(len(list(g.members.keys())) == 13, "13 members stored")
     mae = g.members["G-MAE"]
-    check(mae.name == "Mae Stone-OtherRealm" and mae.joined is not None and mae.invitedBy == "Ivy-Forever",
+    check(mae.name == "Mae Stone-OtherRealm" and mae.joined is not None and mae.invitedBy == "Ivy",
           "name with a space on another realm matches the event log")
     check(find_log(lua, "info") is not None, "tracking-started info entry")
     check(not find_log(lua, "join"), "no join spam on first scan")
     bob = g.members["G-BOB"]
     check(bob.joined is not None and bob.joined.src == "log", "Bob's join date back-filled from the event log")
     check(abs(bob.joined.t - (lua.eval("NOW") - 40 * DAY)) < 2 * DAY, "back-filled date is ~40 days ago")
-    check(bob.invitedBy == "Ivy-Forever", "invited-by back-filled")
+    check(bob.invitedBy == "Ivy", "invited-by back-filled")
     dana = g.members["G-DANA"]
     check(dana.promoted is not None and dana.promoted.src == "log", "Dana's promotion back-filled")
 
@@ -121,15 +121,15 @@ def test_scanning():
     """)
     scan(lua)
     e = find_log(lua, "promote", "Bob")
-    check(e is not None and e.a == "Raven-Forever", "promotion logged with who did it")
+    check(e is not None and e.a == "Raven", "promotion logged with who did it")
     check(find_log(lua, "level", "Bobalt") is not None, "level-up logged")
     check(find_log(lua, "note", "Dana") is not None, "note change logged")
     e = find_log(lua, "rename")
     check(e is not None and str(e.x.old).startswith("Eve") and str(e.x.new).startswith("Evelyn"), "rename logged")
     e = find_log(lua, "kick", "Fred")
-    check(e is not None and e.a == "Ivy-Forever", "kick (not quit) logged with kicker")
+    check(e is not None and e.a == "Ivy", "kick (not quit) logged with kicker")
     e = find_log(lua, "join", "Newbie")
-    check(e is not None and e.a == "Raven-Forever", "join logged with inviter")
+    check(e is not None and e.a == "Raven", "join logged with inviter")
     g = G(lua)
     check(g.former["G-FRED"] is not None and g.former["G-FRED"].leftHow == "kick", "Fred moved to former members")
     check(len(list(g.members["G-BOB"].rankHist.values())) >= 1, "rank history recorded")
@@ -323,6 +323,18 @@ def test_sync():
     hal = a.eval("GuildMastersRus.G.members['G-HAL'].joined")
     check(hal is None or hal.ts != 10**10, "record from a too-low rank is rejected")
 
+    # a client hearing its own hello echoed back (sender has no realm) must not answer it
+    a.execute("MOCK.sent = {}; GuildMastersRus.Sync.Hello(false); GuildMastersRus.Sync.Pump()")
+    hello = [m[2] for m in a.eval("MOCK.sent").values() if str(m[2]).startswith("H:")]
+    check(len(hello) == 1, "hello sent")
+    a.globals().ECHO = hello[0] if hello else ""
+    a.execute("MOCK.sent = {}; FireEvent('CHAT_MSG_ADDON', 'GMRU', ECHO, 'GUILD', 'Raven'); RunTimers(2)")
+    for _ in range(5):
+        a.execute("GuildMastersRus.Sync.Pump()")
+    echo_dump = [m for m in a.eval("MOCK.sent").values() if str(m[2]).startswith("D:")]
+    check(len(echo_dump) == 0, f"own hello echo is ignored ({len(echo_dump)} dumps)")
+    a.execute("MOCK.sent = {}")
+
     # hello / full sync: A has a ban + alt link B doesn't know about
     a.execute(r"""
       local GM = GuildMastersRus
@@ -390,6 +402,22 @@ def test_ui(lua):
       GM.Card.PromptBirthday(GM.G, GM.G.members["G-BOB"])
       d.edit:SetText("07/23")
       d.yes:Run("OnClick")
+      -- add-alt name suggestions
+      GM.Card.PromptAddAlt(GM.G, GM.G.members["G-DANA"])
+      d.edit:SetText("i")
+      d.edit:Run("OnTextChanged", true)
+      SUGGEST1 = {}
+      for _, it in ipairs(d.suggest.list) do SUGGEST1[#SUGGEST1 + 1] = it.value end
+      d.edit:SetText("sto")
+      d.edit:Run("OnTextChanged", true)
+      SUGGEST2 = d.suggest.list[1] and d.suggest.list[1].value
+      d.edit:SetText("da")
+      d.edit:Run("OnTextChanged", true)
+      SUGGEST_SELF = #d.suggest.list
+      d.edit:SetText("ka")
+      d.edit:Run("OnTextChanged", true)
+      d.edit:Run("OnEnterPressed")
+      LINKED = GM.Alts.GetMain(GM.G, "G-KAT") == GM.Alts.GetMain(GM.G, "G-DANA") and GM.Alts.GetMain(GM.G, "G-KAT") ~= nil
       -- context menus
       GM.UI.MemberMenu(UIParent, GM.G, GM.G.members["G-BOB"])
       for tag, fn in pairs(modifiedMenus) do
@@ -400,6 +428,19 @@ def test_ui(lua):
       -- chat tag through the sender-name filter
       CHATOUT = senderFilters[1] and senderFilters[1]("CHAT_MSG_GUILD", "[Bobalt]", "hi", "Bobalt-Forever")
       CHATSECRET = senderFilters[1] and senderFilters[1]("CHAT_MSG_GUILD", "[Bobalt]", "hi", SECRET)
+      -- Prat path: fake Prat with a CallbackHandler-style registry
+      Prat = { handlers = {} }
+      function Prat.RegisterChatEvent(target, ev) Prat.handlers[ev] = target end
+      GM.HookPrat()
+      local h = Prat.handlers["Prat_PreAddMessage"]
+      local msg = { PLAYERLINK = "Bobalt-Forever", PLAYER = "Bobalt", Pp = "]", MESSAGE = "hi" }
+      if h then h:Prat_PreAddMessage("Prat_PreAddMessage", msg, UIParent, "CHAT_MSG_GUILD") end
+      PRATPP = msg.Pp
+      if h then h:Prat_PreAddMessage("Prat_PreAddMessage", msg, UIParent, "CHAT_MSG_GUILD") end
+      PRATPP2 = msg.Pp
+      local other = { PLAYERLINK = "Ivy-Forever", Pp = "]" }
+      if h then h:Prat_PreAddMessage("Prat_PreAddMessage", other, UIParent, "CHAT_MSG_GUILD") end
+      PRATMAIN = other.Pp
       -- group info
       MOCK.units = { party1 = { name = "Fred", guid = "G-FRED" }, party2 = { name = "Stranger", guid = "G-X" } }
       FireEvent("GROUP_ROSTER_UPDATE")
@@ -419,9 +460,18 @@ def test_ui(lua):
       FireEvent("PLAYER_REGEN_DISABLED")
       ACTMACRO = GuildMastersRusActionButton and GuildMastersRusActionButton:GetAttribute("macrotext")
     """)
+    s1 = [v for v in lua.eval("SUGGEST1").values()]
+    check(s1[:1] == ["Ivy"], f"suggestions: names starting with the text come first ({s1})")
+    check(lua.eval("SUGGEST2") == "Mae Stone", f"suggestions match a later word ({lua.eval('SUGGEST2')})")
+    check(lua.eval("SUGGEST_SELF") == 0, "the character itself isn't suggested")
+    check(lua.eval("LINKED"), "Enter takes the top suggestion and links the alt")
     out = lua.eval("CHATOUT")
     check(out is not None and "Bob" in strip_codes(str(out)), f"chat main tag appended ({out})")
     check(lua.eval("CHATSECRET") is None, "secret sender names are left alone")
+    pp = lua.eval("PRATPP")
+    check(pp is not None and strip_codes(pp) == "] (Bob)", f"Prat: main's name added after the alt's name ({pp})")
+    check(lua.eval("PRATPP2") == pp, "Prat: tag isn't added twice")
+    check(lua.eval("PRATMAIN") == "]", "Prat: characters without a main aren't tagged")
     check(lua.eval("GROUPROWS") == 2, "group info scans party members")
     p = strip_codes(printed(lua))
     check("former guildie" in p or "ban list" in p, "group notice for former/banned guildie")
